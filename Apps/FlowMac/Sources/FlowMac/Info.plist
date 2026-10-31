@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>studio.alexsdop.FlowMac</string>
+    <key>CFBundleName</key>
+    <string>FlowMac</string>
+    <key>CFBundleDisplayName</key>
+    <string>Flow</string>
+    <key>CFBundleShortVersionString</key>
+    <string>3.0</string>
+    <key>CFBundleVersion</key>
+    <string>3</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSMotionUsageDescription</key>
+    <string>Flow reads AirPods head motion on this Mac to detect tech neck and lateral lean. No camera, nothing leaves the device.</string>
+</dict>
+</plist>
