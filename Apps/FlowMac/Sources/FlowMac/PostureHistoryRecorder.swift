@@ -11,6 +11,8 @@ import Observation
 final class PostureHistoryRecorder {
     /// Real AirPods time recorded today, seconds.
     private(set) var todayRecordedSeconds: Double = 0
+    /// Plain-language insights from today and the previous 7 days, refreshed every minute.
+    private(set) var insights = PostureInsights.empty
 
     /// Opt-in: also store the bundle id of the app in the foreground. Off by default.
     var recordsFrontmostApp: Bool {
@@ -24,6 +26,10 @@ final class PostureHistoryRecorder {
     @ObservationIgnored private let store = FilePostureHistoryStore()
     @ObservationIgnored private let aggregator = PostureMinuteAggregator()
     @ObservationIgnored private let tracker = PostureEventTracker()
+    @ObservationIgnored private let insightsEngine = PostureInsightsEngine()
+    @ObservationIgnored private var todayMinutes: [PostureMinuteRecord] = []
+    @ObservationIgnored private var todayEvents: [PostureEventRecord] = []
+    @ObservationIgnored private var previousDays: [PostureMinuteRecord] = []
     @ObservationIgnored private var calibrationID: UUID?
     @ObservationIgnored private var frontmostApp: String?
     @ObservationIgnored private var currentDay = Calendar.current.startOfDay(for: Date())
@@ -74,7 +80,10 @@ final class PostureHistoryRecorder {
     func record(_ events: [DeskPostureEvent]) {
         guard !events.isEmpty else { return }
         let records = tracker.handle(events, at: Date(), calibrationID: calibrationID)
+        guard !records.isEmpty else { return }
         perform("events") { try store.append(records) }
+        todayEvents += records
+        refreshInsights()
     }
 
     /// A new reference attitude: later minutes belong to this calibration.
@@ -106,7 +115,9 @@ final class PostureHistoryRecorder {
     private func save(_ minute: PostureMinuteRecord) {
         perform("minutes") { try store.append([minute]) }
         if Calendar.current.isDate(minute.minuteStart, inSameDayAs: Date()) {
+            todayMinutes.append(minute)
             todayRecordedSeconds += minute.trackedSeconds
+            refreshInsights()
         }
     }
 
@@ -114,14 +125,23 @@ final class PostureHistoryRecorder {
         let today = Calendar.current.startOfDay(for: Date())
         guard today != currentDay else { return }
         currentDay = today
-        todayRecordedSeconds = 0
         perform("retention") { try store.applyRetention(now: Date()) }
+        loadToday()
     }
 
     private func loadToday() {
         let start = Calendar.current.startOfDay(for: Date())
-        let minutes = (try? store.minutes(from: start, to: Date().addingTimeInterval(60))) ?? []
-        todayRecordedSeconds = minutes.reduce(0) { $0 + $1.trackedSeconds }
+        let end = Date().addingTimeInterval(60)
+        let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: start) ?? start
+        todayMinutes = (try? store.minutes(from: start, to: end)) ?? []
+        todayEvents = (try? store.events(from: start, to: end)) ?? []
+        previousDays = (try? store.minutes(from: weekAgo, to: start)) ?? []
+        todayRecordedSeconds = todayMinutes.reduce(0) { $0 + $1.trackedSeconds }
+        refreshInsights()
+    }
+
+    private func refreshInsights() {
+        insights = insightsEngine.insights(today: todayMinutes, todayEvents: todayEvents, previousDays: previousDays)
     }
 
     /// History must never break posture tracking: failures are logged, not thrown.

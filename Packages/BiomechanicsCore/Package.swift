@@ -25,7 +25,7 @@ let coreSwiftSettings: [SwiftSetting] = isCommandLineToolsOnly
 let testingFrameworks = "/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
 let testingLibraries = "/Library/Developer/CommandLineTools/Library/Developer/usr/lib"
 let testSwiftSettings: [SwiftSetting] = isCommandLineToolsOnly
-    ? [.unsafeFlags(["-F", testingFrameworks])]
+    ? coreSwiftSettings + [.unsafeFlags(["-F", testingFrameworks])]
     : []
 let testLinkerSettings: [LinkerSetting] = isCommandLineToolsOnly
     ? [.unsafeFlags([

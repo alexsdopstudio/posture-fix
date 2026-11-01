@@ -45,6 +45,9 @@ struct HeadRingView: View {
     var drawsCenter = true
 
     private static let tickCount = 72
+    private static let baseTickLength = 9.0
+    /// Longest stretch a tick can get; the ring radius leaves room for it so nothing is clipped.
+    private static let maxTickStretch = 18.0
 
     var body: some View {
         TimelineView(.animation) { timeline in
@@ -56,7 +59,7 @@ struct HeadRingView: View {
 
     private func draw(in context: inout GraphicsContext, size: CGSize, now: Date) {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
-        let radius = min(size.width, size.height) / 2 - 16
+        let radius = min(size.width, size.height) / 2 - Self.baseTickLength - Self.maxTickStretch - 3
         let inner = radius * 0.62
 
         // Head tilt normalised so that 1 = warning threshold, in screen space (y down = looking down).
@@ -74,7 +77,7 @@ struct HeadRingView: View {
         for index in 0..<Self.tickCount {
             let fraction = Double(index) / Double(Self.tickCount)
             let angle = fraction * 2 * .pi - .pi / 2
-            var length = 9.0
+            var length = Self.baseTickLength
             var tickColor = Color.primary.opacity(0.18)
 
             if isCalibrating && holdProgress < 0.02 {
@@ -97,7 +100,7 @@ struct HeadRingView: View {
                 // Live: ticks toward the tilt direction stretch and take the status colour.
                 let alignment = max(0, cos(angle - direction))
                 let activation = magnitude > 0.08 ? pow(alignment, 8) * min(1.4, magnitude) : 0
-                length += 18 * activation
+                length += Self.maxTickStretch * min(1, activation)
                 if state.status == .inAxis {
                     tickColor = Color.green.opacity(0.45 + 0.55 * min(1, activation))
                 } else {
@@ -151,8 +154,17 @@ struct HeadPostureView: View {
     var body: some View {
         VStack(spacing: 10) {
             HeadRingView(state: controller.headRing, thresholds: controller.ringThresholds)
-            .frame(width: 210, height: 210)
-            .frame(maxWidth: .infinity)
+                .frame(width: 236, height: 236)
+                // Movement pauses the posture timers: a small icon on the ring, never a layout change.
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: "pause.circle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .opacity(controller.isMotionGated ? 1 : 0)
+                        .animation(.easeOut(duration: 0.2), value: controller.isMotionGated)
+                        .help("Ti stai muovendo: il giudizio della postura è in pausa")
+                }
+                .frame(maxWidth: .infinity)
 
             HStack(spacing: 14) {
                 readout("Avanti/indietro", controller.headPitchDeviation)
@@ -161,17 +173,6 @@ struct HeadPostureView: View {
             }
             .font(.caption)
             .monospacedDigit()
-
-            Group {
-                if controller.isSimulatingTechNeck {
-                    Text("Simulazione attiva: −22° avanti, +7° laterale")
-                        .foregroundStyle(.orange)
-                } else if controller.isMotionGated {
-                    Text("Movimento rilevato: timer in pausa")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .font(.caption2)
         }
     }
 

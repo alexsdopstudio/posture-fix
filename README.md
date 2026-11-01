@@ -28,7 +28,7 @@ posture-fix/
 │   │   ├── Sensors/                   Ring buffer, auto-start, calibration, AirPods service
 │   │   ├── Engines/                   Desk engine, Pipeline A/B, router, Flow Score, prescriptions, webcam cues
 │   │   └── History/                   Per-minute posture records, events, JSON Lines store
-│   └── Tests/BiomechanicsCoreTests/   60 deterministic tests on synthetic signals
+│   └── Tests/BiomechanicsCoreTests/   68 deterministic tests (66 on Command Line Tools)
 ├── Apps/FlowMac/                      macOS 14+ menu bar app (executable package)
 │   └── Sources/FlowMac/
 ├── docs/posture-history-design.md     Posture history design and decisions
@@ -165,6 +165,7 @@ See [docs/posture-history-design.md](docs/posture-history-design.md) for the ful
 * `PostureEventTracker` records nudges, recoveries (with latency) and relapses (with how long the recovery lasted); calibrations are recorded with whether the webcam took part.
 * `FilePostureHistoryStore` writes JSON Lines under `~/Library/Application Support/Flow/History/YYYY-MM-DD/`. Torn lines are skipped on read. After 90 days a day is compacted into one `PostureDaySummary` in `summaries.jsonl`.
 * Only real, calibrated AirPods data is recorded: never the simulated head, never samples before or during a calibration.
+* `PostureInsightsEngine` turns today's minutes and events (plus the previous 7 days) into plain insights: share of good posture, habitual pitch vs the neutral and vs the last 7 days, lateral habit (≥ 70% of lean time on one side), the sitting time after which posture worsens (20/30/45/60 min, ≥ 10 points worse), the hardest hour, nudge count and recovery time, and one tip (break interval, centre the workspace, raise the screen, micro-break, or keep going). Each insight needs a minimum amount of data and is omitted otherwise.
 
 ### 8. Desk <-> Gym bridge (`Engines/AdaptivePrescriptionEngine.swift`)
 
@@ -185,7 +186,8 @@ Applied adaptations are tagged on `WorkoutSession.appliedDeskAdaptations`, e.g. 
 * **`HeadPostureView.swift`**: Face ID enrollment-style ring. Radial ticks stretch and light up toward where the head tilts (green in axis, orange in between, red deviating), a spirit-level dot shows the head, and the ring redraws at display rate from a non-observable state written at 50 Hz.
 * **`CalibrationHUD.swift`**: click-through HUD in the upper third of the main screen (eye level) for the guided calibration: the webcam preview inside the ring like Face ID, the live cue checklist, the ring filling during the 3 s hold, a "Tink" when it locks.
 * **`CameraPostureCapture.swift`**: AVCapture session + Vision analysis at ~10 Hz, running only during calibration.
-* **`PostureHistoryRecorder.swift`**: feeds the history aggregator, tracker and store; flushes on quit.
+* **`PostureHistoryRecorder.swift`**: feeds the history aggregator, tracker and store, keeps today's insights up to date every minute, flushes on quit.
+* **`InsightsView.swift`**: the "Oggi" section of the panel: hourly bars (green good, red deviated), the insights and the tip. Settings and demo controls sit in a collapsed "Controlli" section.
 * **`PeripheralOverlayWindow.swift`**: a `@MainActor` controller that creates one `.borderless`, `.clear`, `.screenSaver`-level, `ignoresMouseEvents = true` window per `NSScreen.screens` entry and draws a progressive peripheral vignette. **Currently switched off** (`showsPeripheralOverlay = false`): the spatial tone is the only nudge.
 * **`SpatialMagneticAudioEngine.swift`**: `AVAudioEngine` + `AVAudioSourceNode` generating a pure 432 Hz sine in real time (20 ms amplitude glide, no clicks), routed in mono into an `AVAudioEnvironmentNode` with `.HRTFHQ`. The source sits 1.5 m behind the nape (`z = 1.5`) and moves on X opposite to the head's roll. The **Dopamine Chime** is `NSSound(named: "Glass")` on recovery.
 * `Info.plist` (with `NSMotionUsageDescription`, `NSCameraUsageDescription` and `LSUIElement`) is embedded in the executable via `-sectcreate __TEXT __info_plist`, so CoreMotion can request access when the app runs straight from `swift run`.
@@ -204,6 +206,8 @@ Applied adaptations are tagged on `WorkoutSession.appliedDeskAdaptations`, e.g. 
 | `Quaternion + calibration` | Euler round-trip; relative attitude near gimbal lock; 10 s seated detection + P85 baseline; reference kept across brief movements; **guided 3 s hold with AirPods worn crooked**; hold restarts on movement; timeout; guided-only mode reopens at the next sit-down; simulated head; standing up |
 | `Webcam-assisted calibration` | upright posture ready; no face; blocking vs advisory cues; missing shoulders; the gate pauses and resumes the hold |
 | `Posture history` | per-minute categories, states and percentiles; short minutes dropped; dominant app and roll; sitting sessions and breaks; nudge/recovery/relapse events; store round-trip and torn lines; 90-day compaction |
+| `Posture insights` | no conclusions from too little data; habitual pitch and hourly timeline; fatigue threshold and break tip; lateral habit needs a clear majority; low head and worst hour; 7-day comparison and nudge response |
+| `SwiftData models` (Xcode only) | session with sets saved, re-read and cascade-deleted in an in-memory store; daily summary persisted |
 | `AdaptivePrescriptionEngine` | each rule in isolation, dominant lean, combined tags, session score |
 
 ## Known limits

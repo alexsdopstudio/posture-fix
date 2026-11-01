@@ -76,7 +76,7 @@ final class CalibrationHUDController {
     }
 
     private func makePanel() -> NSPanel {
-        let size = NSSize(width: 340, height: 480)
+        let size = NSSize(width: 340, height: 500)
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -136,12 +136,12 @@ struct CalibrationHUDView: View {
                     HeadRingView(state: state, thresholds: thresholds, drawsCenter: camera.previewLayer == nil)
                     if let layer = camera.previewLayer {
                         CameraPreviewView(layer: layer)
-                            .frame(width: 128, height: 128)
+                            .frame(width: 140, height: 140)
                             .clipShape(Circle())
                             .opacity(calibrated ? 0.4 : 1)
                     }
                 }
-                .frame(width: 220, height: 220)
+                .frame(width: 240, height: 240)
                 Text(instruction(progress: progress, calibrated: calibrated))
                     .font(.system(size: 13, weight: .medium))
                     .multilineTextAlignment(.center)

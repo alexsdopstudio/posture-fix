@@ -24,6 +24,7 @@ make run     # run FlowMac
 * `Packages/BiomechanicsCore/Package.swift` detects a CLT-only toolchain and defines `FLOW_SWIFTDATA_MACROS_UNAVAILABLE`. `Models/FlowModels.swift` keeps two variants of each model, `@Model` and plain class. **Edit both branches together**: same properties, same defaults, same initialisers.
 * CloudKit rules for every model: default value on every stored property, optional relationships, no `@Attribute(.unique)`, enums stored as `...Raw: String` with typed accessors in an extension.
 * Tests use swift-testing (`import Testing`), not XCTest: XCTest is not available on CLT.
+* The dev Mac now has Xcode (active developer dir). Verify both toolchains before pushing: `make test` (Xcode, 68 tests incl. the SwiftData suite) and `DEVELOPER_DIR=/Library/Developer/CommandLineTools make test` (66 tests, SwiftData suite compiled out).
 
 ## Engine conventions
 
