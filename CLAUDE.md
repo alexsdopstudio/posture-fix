@@ -7,6 +7,7 @@ Guidance for coding agents working in this repository (Flow v3.0, "Insanely Grea
 * `Packages/BiomechanicsCore`: shared Swift package (iOS 17+, macOS 14+, tools 5.10, Swift 5 language mode). All signal processing, engines, models and tests.
 * `Apps/FlowMac`: macOS 14+ executable package (menu bar app). Depends on `../../Packages/BiomechanicsCore` by path.
 * `README.md` documents every algorithm and threshold. Keep it in sync when a threshold changes.
+* `docs/posture-history-design.md` holds the posture history design and the user's decisions (local JSON Lines storage, frontmost app opt-in and off by default, progressive targets, 90-day retention). Phases 2 and 3 are not built yet.
 
 ## Commands
 
@@ -35,6 +36,11 @@ make run     # run FlowMac
 ## FlowMac
 
 * UI strings are Italian (`🧪 Simula Tech Neck (>45s)` / `✨ Raddrizza Postura`).
+* Calibration is **guided only** (`allowsAutomaticCapture = false`): the user chose this so the neutral is never a silently adopted slouch. Do not re-enable automatic capture in the app.
+* Nothing is judged, scored or recorded before a calibration. The history never receives simulated or uncalibrated samples.
+* The webcam runs only during calibration and is on by default (user's choice). Frames are reduced to geometry and discarded; never store or send images.
+* The peripheral vignette is switched off (`showsPeripheralOverlay = false`) at the user's request; the spatial tone is the only nudge.
+* Timings are the spec values (drifting 15 s, nudge 45 s). Do not leave shortened test timings in a commit.
 * `Info.plist` is embedded with `-sectcreate` (see `Apps/FlowMac/Package.swift`) and excluded from sources.
 * The audio render block is built in a `nonisolated static` factory and only touches `ToneState`. Keep main-actor state out of it.
 

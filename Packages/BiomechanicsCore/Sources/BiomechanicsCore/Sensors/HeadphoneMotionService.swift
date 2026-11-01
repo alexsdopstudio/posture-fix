@@ -21,6 +21,10 @@ public final class HeadphoneMotionService {
     public private(set) var isUsingSimulation = true
     public private(set) var latestPose: HeadPose?
     public private(set) var latestSample: IMUSample?
+    /// When the last reference attitude was locked (wear calibration or sit-down).
+    public private(set) var lastCalibrationDate: Date?
+    /// Waiting for a still moment after the AirPods were put on.
+    public private(set) var isAwaitingWearCalibration = false
 
     /// Extra offsets added to the calibrated attitude (used by the demo controls).
     public var injectedPitchOffsetDegrees: Double = 0
@@ -35,21 +39,30 @@ public final class HeadphoneMotionService {
 
     @ObservationIgnored private let manager = CMHeadphoneMotionManager()
     @ObservationIgnored private let connectionObserver = HeadphoneConnectionObserver()
-    @ObservationIgnored private let calibrator = ZeroTouchAutoCalibrator()
+    @ObservationIgnored private let calibrator: ZeroTouchAutoCalibrator
     @ObservationIgnored private var simulator = SeatedHeadSimulator()
     @ObservationIgnored private var simulationTimer: Timer?
     @ObservationIgnored private var lastRealSampleUptime: TimeInterval = -.infinity
     @ObservationIgnored private var isRunning = false
 
-    public init() {}
+    public init(calibration: ZeroTouchAutoCalibrator.Configuration = ZeroTouchAutoCalibrator.Configuration()) {
+        calibrator = ZeroTouchAutoCalibrator(configuration: calibration)
+    }
+
+    public var calibrationConfiguration: ZeroTouchAutoCalibrator.Configuration { calibrator.configuration }
 
     public func start() {
         guard !isRunning else { return }
         isRunning = true
 
         connectionObserver.onChange = { [weak self] connected in
-            MainActor.assumeIsolated {
-                self?.sourceState = connected ? .airPodsStreaming : .airPodsNotWorn
+            // CoreMotion does not document the delegate queue: hop to main explicitly.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.sourceState = connected ? .airPodsStreaming : .airPodsNotWorn
+                    if connected { self.beginWearCalibration() }
+                }
             }
         }
         manager.delegate = connectionObserver
@@ -86,15 +99,30 @@ public final class HeadphoneMotionService {
         simulationTimer = nil
     }
 
-    /// Re-run Zero-Touch calibration from scratch.
+    /// Re-run the guided calibration: the next steady 3 s hold becomes the neutral.
     public func recalibrate() {
-        calibrator.reset()
+        beginWearCalibration()
+    }
+
+    /// Lets an external check (the webcam) hold the guided calibration until the posture is right.
+    public func setCalibrationHoldGate(_ open: Bool) {
+        calibrator.isHoldGateOpen = open
+    }
+
+    private func beginWearCalibration() {
+        calibrator.beginWearCalibration()
+        isAwaitingWearCalibration = true
     }
 
     // MARK: - Sample pipeline
 
     private func handleRealMotion(_ motion: CMDeviceMotion) {
         lastRealSampleUptime = ProcessInfo.processInfo.systemUptime
+        if isUsingSimulation {
+            // AirPods just put on (a reference from the simulated head is meaningless):
+            // the way they sit now becomes the neutral.
+            beginWearCalibration()
+        }
         isUsingSimulation = false
         sourceState = .airPodsStreaming
         let q = motion.attitude.quaternion
@@ -111,9 +139,10 @@ public final class HeadphoneMotionService {
     private func simulationTick() {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastRealSampleUptime > realSampleTimeout else { return }
-        if !isUsingSimulation {
-            // Headphones went quiet: restart calibration on the simulated head.
-            calibrator.reset()
+        if !isUsingSimulation || (calibrator.referenceAttitude == nil && !calibrator.isAwaitingWearCapture) {
+            // No AirPods: the simulated head is calibrated silently so the demo controls work.
+            calibrator.adoptNextSampleAsNeutral()
+            isAwaitingWearCalibration = false
         }
         isUsingSimulation = true
         if sourceState == .airPodsStreaming {
@@ -124,6 +153,12 @@ public final class HeadphoneMotionService {
 
     private func emit(_ sample: IMUSample) {
         var pose = calibrator.process(sample)
+        if pose.didCaptureReference {
+            lastCalibrationDate = Date()
+        }
+        if isAwaitingWearCalibration != calibrator.isAwaitingWearCapture {
+            isAwaitingWearCalibration = calibrator.isAwaitingWearCapture
+        }
         pose.relativeAttitude.pitchDegrees += injectedPitchOffsetDegrees
         pose.relativeAttitude.rollDegrees += injectedRollOffsetDegrees
         latestSample = sample

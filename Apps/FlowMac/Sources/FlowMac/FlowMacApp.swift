@@ -47,6 +47,10 @@ struct FlowMenuView: View {
 
             Divider()
 
+            HeadPostureView(controller: controller)
+
+            Divider()
+
             VStack(alignment: .leading, spacing: 6) {
                 Label("Streak recuperi: \(controller.streak)", systemImage: "flame.fill")
                 Label(controller.airPodsStatus, systemImage: controller.motion.isUsingSimulation ? "waveform.path.ecg" : "airpodspro")
@@ -61,12 +65,43 @@ struct FlowMenuView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
             } else {
-                Button("🧪 Simula Tech Neck (>45s)") { controller.simulateTechNeck() }
+                Button("🧪 Simula Tech Neck (>\(controller.nudgeAfterSeconds)s)") { controller.simulateTechNeck() }
                     .buttonStyle(.borderedProminent)
             }
 
+            Toggle("Webcam nella calibrazione", isOn: Binding(
+                get: { controller.usesCameraForCalibration },
+                set: { controller.usesCameraForCalibration = $0 }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .font(.callout)
+
+            Divider()
+
             HStack {
-                Button("Ricalibra") { controller.recalibrate() }
+                Label("Storico oggi: \(Self.duration(controller.history.todayRecordedSeconds))", systemImage: "chart.xyaxis.line")
+                Spacer()
+                Button {
+                    controller.history.revealInFinder()
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.borderless)
+                .help("Apri la cartella dei dati")
+            }
+            .font(.callout)
+
+            Toggle("Registra app in primo piano", isOn: Binding(
+                get: { controller.history.recordsFrontmostApp },
+                set: { controller.history.recordsFrontmostApp = $0 }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .font(.callout)
+
+            HStack {
+                Button(controller.isCalibrated ? "Ricalibra" : "Calibra") { controller.recalibrate() }
                 Spacer()
                 Button("Esci") { NSApplication.shared.terminate(nil) }
             }
@@ -75,6 +110,11 @@ struct FlowMenuView: View {
         }
         .padding(16)
         .frame(width: 300)
+    }
+
+    static func duration(_ seconds: Double) -> String {
+        let minutes = Int(seconds / 60)
+        return minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
     }
 
     private var stateColor: Color {

@@ -204,6 +204,159 @@ struct CalibrationTests {
         #expect(baseline > 0 && baseline < 1)
     }
 
+    @Test("A brief movement keeps the reference; a long absence recaptures it")
+    func referenceStability() throws {
+        let calibrator = ZeroTouchAutoCalibrator()
+        var random = SeededRandom(seed: 4)
+        var time = 0.0
+        func feed(seconds: Double, attitude: Quaternion, accelerationNoise: Double) {
+            for _ in 0..<Int(seconds * 50) {
+                time += 0.02
+                let noise = Vector3(x: random.nextGaussian() * accelerationNoise,
+                                    y: random.nextGaussian() * accelerationNoise,
+                                    z: random.nextGaussian() * accelerationNoise)
+                calibrator.process(IMUSample(timestamp: time, quaternion: attitude, userAcceleration: noise))
+            }
+        }
+        let upright = Quaternion(pitchDegrees: 0, rollDegrees: 0, yawDegrees: 0)
+        let lookingDown = Quaternion(pitchDegrees: -20, rollDegrees: 0, yawDegrees: 0)
+
+        feed(seconds: 12, attitude: upright, accelerationNoise: 0.001)
+        let firstReference = try #require(calibrator.referenceAttitude)
+        // Reach for the phone, then sit still while looking down.
+        feed(seconds: 2, attitude: lookingDown, accelerationNoise: 0.2)
+        feed(seconds: 12, attitude: lookingDown, accelerationNoise: 0.001)
+        #expect(calibrator.isSeated)
+        #expect(calibrator.referenceAttitude == firstReference)
+
+        // Away for more than a minute: the next sit-down is a new reference.
+        feed(seconds: 70, attitude: upright, accelerationNoise: 0.2)
+        feed(seconds: 12, attitude: lookingDown, accelerationNoise: 0.001)
+        #expect(calibrator.referenceAttitude == lookingDown)
+    }
+
+    @Test("Guided calibration: a 3 s steady hold locks the neutral; crooked AirPods read as upright")
+    func guidedCalibration() throws {
+        let calibrator = ZeroTouchAutoCalibrator()
+        calibrator.beginWearCalibration()
+        // Earbud rotated 15° forward and 10° sideways in the ear.
+        let crooked = Quaternion(pitchDegrees: 15, rollDegrees: 10, yawDegrees: 0)
+        var time = 0.0
+        var captured: HeadPose?
+        var progressAtHalf: Double?
+        for index in 1...(4 * 50) {
+            time = Double(index) * 0.02
+            let pose = calibrator.process(IMUSample(timestamp: time, quaternion: crooked))
+            if index == 75 { progressAtHalf = pose.calibrationProgress }
+            if pose.didCaptureReference {
+                captured = pose
+                break
+            }
+        }
+        // Progress fills linearly, then locks at ~3 s.
+        #expect(abs((progressAtHalf ?? 0) - 0.5) < 0.02)
+        let pose = try #require(captured)
+        #expect(abs(time - 3.0) < 0.05)
+        #expect(pose.isCalibrated)
+        #expect(pose.neutralPitchBaseline == 0)
+        #expect(calibrator.isNeutralLockedByUser)
+        #expect(abs(pose.relativeAttitude.pitchDegrees) < 1e-6)
+
+        // Looking down 20° from there reads as -20° pitch, not mixed into roll.
+        let lookingDown = crooked * Quaternion(pitchDegrees: -20, rollDegrees: 0, yawDegrees: 0)
+        let relative = calibrator.process(IMUSample(timestamp: time + 0.02, quaternion: lookingDown)).relativeAttitude
+        #expect(abs(relative.pitchDegrees - -20) < 1e-6)
+        #expect(abs(relative.rollDegrees) < 1e-6)
+
+        // The chosen neutral does not drift with P85 while seated.
+        for index in 1...(20 * 50) {
+            calibrator.process(IMUSample(timestamp: time + Double(index) * 0.02, quaternion: lookingDown))
+        }
+        #expect(calibrator.neutralPitchBaseline == 0)
+    }
+
+    @Test("Moving the head restarts the hold instead of locking a wrong posture")
+    func guidedCalibrationRestarts() {
+        let calibrator = ZeroTouchAutoCalibrator()
+        calibrator.beginWearCalibration()
+        var time = 0.0
+        for _ in 0..<100 {
+            time += 0.02
+            calibrator.process(IMUSample(timestamp: time))
+        }
+        #expect(abs(calibrator.wearProgress - 2.0 / 3) < 0.02)
+        // A glance down: the head rotates beyond the 2° tolerance.
+        time += 0.02
+        let glance = Quaternion(pitchDegrees: -15, rollDegrees: 0, yawDegrees: 0)
+        calibrator.process(IMUSample(timestamp: time, quaternion: glance, rotationRate: Vector3(x: -1, y: 0, z: 0)))
+        #expect(calibrator.wearProgress == 0)
+        #expect(calibrator.isAwaitingWearCapture)
+        #expect(calibrator.referenceAttitude == nil)
+    }
+
+    @Test("Without a steady hold the guided calibration times out to automatic")
+    func guidedCalibrationTimeout() {
+        let calibrator = ZeroTouchAutoCalibrator()
+        calibrator.beginWearCalibration()
+        for index in 0..<(21 * 50) {
+            let angle = Double(index) * 0.5
+            let wandering = Quaternion(pitchDegrees: 10 * sin(angle), rollDegrees: 0, yawDegrees: 0)
+            calibrator.process(IMUSample(timestamp: Double(index) * 0.02, quaternion: wandering))
+        }
+        #expect(!calibrator.isAwaitingWearCapture)
+        #expect(calibrator.referenceAttitude == nil)
+        #expect(!calibrator.isNeutralLockedByUser)
+    }
+
+    @Test("Guided-only mode: sitting still never auto-captures, it reopens the guided calibration")
+    func guidedOnlyMode() {
+        var configuration = ZeroTouchAutoCalibrator.Configuration()
+        configuration.allowsAutomaticCapture = false
+        let calibrator = ZeroTouchAutoCalibrator(configuration: configuration)
+        var random = SeededRandom(seed: 12)
+        var time = 0.0
+        func feed(seconds: Double, noise: Double, quaternion: Quaternion = .identity) {
+            for _ in 0..<Int(seconds * 50) {
+                time += 0.02
+                let acceleration = Vector3(x: random.nextGaussian() * noise, y: random.nextGaussian() * noise, z: 0)
+                calibrator.process(IMUSample(timestamp: time, quaternion: quaternion, userAcceleration: acceleration))
+            }
+        }
+        // Walking for a while: no prompt.
+        feed(seconds: 12, noise: 0.2)
+        #expect(!calibrator.isAwaitingWearCapture)
+        // Sitting still for 10 s: the guided calibration opens instead of capturing silently.
+        feed(seconds: 10.1, noise: 0.001)
+        #expect(calibrator.isAwaitingWearCapture)
+        #expect(calibrator.referenceAttitude == nil)
+
+        // The user ignores it while fidgeting in the chair (rotating the head): it times out...
+        for index in 0..<(21 * 50) {
+            time += 0.02
+            let wandering = Quaternion(pitchDegrees: 10 * sin(Double(index) * 0.5), rollDegrees: 0, yawDegrees: 0)
+            calibrator.process(IMUSample(timestamp: time, quaternion: wandering))
+        }
+        #expect(!calibrator.isAwaitingWearCapture)
+        // ...and does not reopen until the next sit-down.
+        feed(seconds: 5, noise: 0.001)
+        #expect(!calibrator.isAwaitingWearCapture)
+        feed(seconds: 3, noise: 0.2)
+        feed(seconds: 10.1, noise: 0.001)
+        #expect(calibrator.isAwaitingWearCapture)
+        #expect(!calibrator.isNeutralLockedByUser)
+    }
+
+    @Test("The simulated head adopts its first sample as neutral")
+    func adoptForSimulation() {
+        let calibrator = ZeroTouchAutoCalibrator()
+        calibrator.adoptNextSampleAsNeutral()
+        let tilted = Quaternion(pitchDegrees: 7, rollDegrees: 0, yawDegrees: 0)
+        let pose = calibrator.process(IMUSample(timestamp: 0, quaternion: tilted))
+        #expect(pose.didCaptureReference)
+        #expect(pose.isCalibrated)
+        #expect(calibrator.referenceAttitude == tilted)
+    }
+
     @Test("Standing up (high acceleration variance) clears the seated flag")
     func standingUp() {
         let calibrator = ZeroTouchAutoCalibrator()

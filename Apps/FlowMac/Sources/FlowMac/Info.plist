@@ -16,6 +16,8 @@
     <string>14.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>Flow uses the camera only for the few seconds of posture calibration, to check that your head is level and facing the screen. Frames are analysed on this Mac and never stored or sent.</string>
     <key>NSMotionUsageDescription</key>
     <string>Flow reads AirPods head motion on this Mac to detect tech neck and lateral lean. No camera, nothing leaves the device.</string>
 </dict>

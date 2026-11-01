@@ -121,7 +121,7 @@ struct PeripheralVignetteView: View {
                     endPoint: bias >= 0 ? .leading : .trailing
                 )
             }
-            .animation(.easeInOut(duration: 0.8), value: intensity)
+            .animation(.easeOut(duration: 0.25), value: intensity)
             .animation(.easeInOut(duration: 0.8), value: bias)
         }
         .ignoresSafeArea()

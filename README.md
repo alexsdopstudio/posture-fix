@@ -1,13 +1,13 @@
 # Posture Fix · Flow v3.0 "Insanely Great Zero-UI Edition"
 
-Flow is a privacy-first posture and training companion that runs on head kinematics alone.
-There is no webcam and no cloud inference. The input is AirPods motion (`CMHeadphoneMotionManager`), plus an optional iPhone in the trouser pocket at the gym.
+Flow is a privacy-first posture and training companion that runs on head kinematics.
+There is no cloud inference. The input is AirPods motion (`CMHeadphoneMotionManager`), plus an optional iPhone in the trouser pocket at the gym. The webcam is used **only during the few seconds of calibration** (on by default, can be turned off), analysed on-device with Vision and never stored. Posture tracking during the day is AirPods only.
 
 It works in two places with one number:
 
 | Context | What Flow does | The number |
 |---|---|---|
-| **Desk** (macOS menu bar) | Detects tech neck, turtle neck and lateral lean, then nudges you back with a peripheral vignette and a 432 Hz spatial tone behind your head | Daily **Flow Score %** |
+| **Desk** (macOS menu bar) | Detects tech neck, turtle neck and lateral lean, nudges you back with a 432 Hz spatial tone behind your head, and records your posture history | Daily **Flow Score %** |
 | **Gym** (Pocket Mode) | Auto-starts the set, recovers rep 1 retroactively, routes each set to the right pipeline, scores technique | Set **Flow Score 0-100** |
 
 The **Desk <-> Gym bridge** closes the loop: posture debt from the desk changes the next workout.
@@ -26,10 +26,12 @@ posture-fix/
 │   │   ├── DSP/                       RBJ biquads, zero-phase band-pass
 │   │   ├── Models/FlowModels.swift    SwiftData + CloudKit models
 │   │   ├── Sensors/                   Ring buffer, auto-start, calibration, AirPods service
-│   │   └── Engines/                   Desk engine, Pipeline A/B, router, Flow Score, prescriptions
-│   └── Tests/BiomechanicsCoreTests/   41 deterministic tests on synthetic signals
+│   │   ├── Engines/                   Desk engine, Pipeline A/B, router, Flow Score, prescriptions, webcam cues
+│   │   └── History/                   Per-minute posture records, events, JSON Lines store
+│   └── Tests/BiomechanicsCoreTests/   60 deterministic tests on synthetic signals
 ├── Apps/FlowMac/                      macOS 14+ menu bar app (executable package)
 │   └── Sources/FlowMac/
+├── docs/posture-history-design.md     Posture history design and decisions
 ├── Makefile                           test / build / run shortcuts
 ├── CLAUDE.md                          Guide for coding agents
 └── README.md
@@ -73,14 +75,14 @@ SwiftData `@Model` classes that follow the CloudKit rules: every stored property
 * `RetroactiveRingBuffer`: lock-protected circular buffer, 5.0 s at 50 Hz = 250 samples. It always holds the last 5 s during gym rest.
 * `RepAutoStartDetector`: a single movement is ignored (re-racking, walking). The second movement onset *in the same direction* within 4 s fires `AutoStartTrigger`, which carries the timestamp of rep 1 and a 1 s pre-roll. Rep 1 is then pulled out of the buffer with `samples(from:through:)` or `retroactiveCapture(triggeredAt:lookback:)`.
 
-### 3. Head motion and Zero-Touch calibration (`Sensors/`)
+### 3. Head motion and calibration (`Sensors/`)
 
 * `HeadphoneMotionService` (`@MainActor @Observable`) streams `CMHeadphoneMotionManager` at 50 Hz and reports connect/disconnect. When no real sample has arrived for 1 s (AirPods not worn, access denied, or no hardware), a deterministic `SeatedHeadSimulator` takes over, so the app and tests always have input.
 * Gimbal-lock free algebra: every attitude is `current.multiply(byInverseOf: dynamicReferenceAttitude)` (Hamilton product with the inverse reference), then converted to pitch θ (X), roll ϕ (Y), yaw ψ (Z) in degrees.
-* `ZeroTouchAutoCalibrator`:
-  * **Seated detection**: the standard deviation of `|userAcceleration|` stays below 0.02 g for 10 s.
-  * Every sit-down captures a new dynamic reference attitude.
-  * While seated, relative pitch is sampled every 0.2 s into a 5 min window. The **upper 85th percentile** becomes the neutral baseline. Slouching pulls pitch down, so the upper percentile follows the user's own upright posture without any calibration button.
+* `ZeroTouchAutoCalibrator` supports two ways of setting the neutral:
+  * **Guided calibration** (the one FlowMac uses): when the AirPods are put on, on demand, or when the user sits still for 10 s without a neutral, the user holds an upright head steady for **3 s**. Progress fills while the head stays within 2° of where the hold started (and rotates slower than 0.2 rad/s) and restarts from zero when it moves. An external gate (the webcam) can pause the hold until the posture is right. The held attitude becomes the reference **and** the neutral, and stays the neutral (no P85 drift). Because everything is relative to it, AirPods worn slightly rotated in the ear do not make the head look crooked. Without a steady hold within 20 s it gives up and reopens at the next sit-down.
+  * **Zero-Touch automatic capture** (spec behaviour, `allowsAutomaticCapture = true`, the library default): seated detection (std of `|userAcceleration|` < 0.02 g for 10 s) captures the reference; brief movements keep it, only 60 s away recaptures it. While seated, relative pitch is sampled every 0.2 s into a 5 min window and its **upper 85th percentile** becomes the neutral baseline. FlowMac turns this off: an automatic capture can silently adopt a slouched posture as "correct".
+  * The simulated head (no AirPods) adopts its first sample as neutral, so the demo controls work.
 
 ### 4. Desk posture engine (`Engines/DeskPostureEngine.swift`)
 
@@ -138,7 +140,33 @@ Both pipelines run concurrently (`async let`) over the retroactive buffer.
 
 `SetAnalysis.makeExerciseSet()` turns the result into a persistable `ExerciseSet`.
 
-### 6. Desk <-> Gym bridge (`Engines/AdaptivePrescriptionEngine.swift`)
+### 6. Webcam-assisted calibration (`Engines/CameraPostureAssessment.swift`)
+
+FlowMac reduces each webcam frame (Vision face landmarks + body pose, ~10 per second) to a `CameraPostureObservation`: eye-line tilt, face yaw, face centre, eye height, face width, shoulder tilt and span. `CameraPostureAssessment` turns it into cues:
+
+| Cue | Rule | Type |
+|---|---|---|
+| Face visible | a face is detected | blocking |
+| Head level | eye-line tilt ≤ 3° | blocking |
+| Facing the screen | face yaw ≤ 10° | blocking |
+| Centred | face centre within 0.2 of the frame centre | blocking |
+| Shoulders level | shoulder tilt ≤ 4° (when visible) | blocking |
+| Distance | face width 0.12-0.27 of the frame (~85-40 cm on a laptop camera) | advisory |
+| Chin back | face/shoulder width ≤ 0.55 (head pushed forward raises it) | advisory |
+| Screen height | eyes ≤ 0.72 of the frame height | advisory |
+
+The guided hold only fills while every blocking cue holds, so the AirPods reference is captured on a head the camera confirms is level and facing the screen. The webcam never blocks for more than 10 s (advice stays visible), and with no camera, no permission or no frame within 4 s the calibration continues with AirPods only. Advisory cues are estimates from a frontal camera and never block.
+
+### 7. Posture history (`History/`)
+
+See [docs/posture-history-design.md](docs/posture-history-design.md) for the full design and decisions. Phase 1 is implemented:
+
+* `PostureMinuteAggregator` folds the 50 Hz stream into one `PostureMinuteRecord` per wall-clock minute: tracked and moving seconds, pitch vs neutral (mean, median, p10, p90 over judged samples), mean roll, seconds per category and per engine state, sitting-session length (a break is 2 min not seated), calibration id, and the dominant frontmost app when the user opts in (off by default).
+* `PostureEventTracker` records nudges, recoveries (with latency) and relapses (with how long the recovery lasted); calibrations are recorded with whether the webcam took part.
+* `FilePostureHistoryStore` writes JSON Lines under `~/Library/Application Support/Flow/History/YYYY-MM-DD/`. Torn lines are skipped on read. After 90 days a day is compacted into one `PostureDaySummary` in `summaries.jsonl`.
+* Only real, calibrated AirPods data is recorded: never the simulated head, never samples before or during a calibration.
+
+### 8. Desk <-> Gym bridge (`Engines/AdaptivePrescriptionEngine.swift`)
 
 | Desk debt | Prescription |
 |---|---|
@@ -152,11 +180,15 @@ Applied adaptations are tagged on `WorkoutSession.appliedDeskAdaptations`, e.g. 
 
 ## FlowMac (macOS menu bar)
 
-* **`FlowMacApp.swift`**: `MenuBarExtra` (`.window` style) with `NSApplication.shared.setActivationPolicy(.accessory)`, so there is no Dock icon. The menu bar shows the Flow Score %. The panel shows the score, the live state, the recovery streak, the AirPods status (live / not worn, simulation on / unavailable), the calibration status, and the demo toggle **🧪 Simula Tech Neck (>45s)** / **✨ Raddrizza Postura**.
-* **`FlowController.swift`**: glues `HeadphoneMotionService` → `DeskPostureEngine` → nudges, and resets the daily metrics at midnight. The demo button injects a −22° flexion and a +7° right roll and fast-forwards past 45 s, so the overlay and the audio start immediately. "Raddrizza" removes the injection, and the engine recovers by itself after 1.5 s in axis (chime included).
-* **`PeripheralOverlayWindow.swift`**: a `@MainActor` controller that creates one `.borderless`, `.clear`, `.screenSaver`-level, `ignoresMouseEvents = true` window per `NSScreen.screens` entry (rebuilt when screens change). A SwiftUI view draws a progressive peripheral vignette (intensity ramps over 10 s of nudge). The clear centre shifts away from the lean and the leaning side gets darker.
+* **`FlowMacApp.swift`**: `MenuBarExtra` (`.window` style) with `NSApplication.shared.setActivationPolicy(.accessory)`, so there is no Dock icon. The menu bar shows the Flow Score %. The panel (Italian UI) shows the score, the live state, the head ring, the recovery streak, the AirPods and calibration status, the webcam and frontmost-app switches, today's recorded time with a button to open the data folder, and the demo toggle **🧪 Simula Tech Neck (>45s)** / **✨ Raddrizza Postura**.
+* **`FlowController.swift`**: glues `HeadphoneMotionService` → `DeskPostureEngine` → nudges and history, and resets the daily metrics at midnight. Nothing is judged before a calibration. The tone stops as soon as the head leaves the deviation; the recovery (chime, streak) still needs 1.5 s in axis. The demo button injects a −22° flexion and a +7° right roll and fast-forwards past 45 s. "Raddrizza" removes the injection.
+* **`HeadPostureView.swift`**: Face ID enrollment-style ring. Radial ticks stretch and light up toward where the head tilts (green in axis, orange in between, red deviating), a spirit-level dot shows the head, and the ring redraws at display rate from a non-observable state written at 50 Hz.
+* **`CalibrationHUD.swift`**: click-through HUD in the upper third of the main screen (eye level) for the guided calibration: the webcam preview inside the ring like Face ID, the live cue checklist, the ring filling during the 3 s hold, a "Tink" when it locks.
+* **`CameraPostureCapture.swift`**: AVCapture session + Vision analysis at ~10 Hz, running only during calibration.
+* **`PostureHistoryRecorder.swift`**: feeds the history aggregator, tracker and store; flushes on quit.
+* **`PeripheralOverlayWindow.swift`**: a `@MainActor` controller that creates one `.borderless`, `.clear`, `.screenSaver`-level, `ignoresMouseEvents = true` window per `NSScreen.screens` entry and draws a progressive peripheral vignette. **Currently switched off** (`showsPeripheralOverlay = false`): the spatial tone is the only nudge.
 * **`SpatialMagneticAudioEngine.swift`**: `AVAudioEngine` + `AVAudioSourceNode` generating a pure 432 Hz sine in real time (20 ms amplitude glide, no clicks), routed in mono into an `AVAudioEnvironmentNode` with `.HRTFHQ`. The source sits 1.5 m behind the nape (`z = 1.5`) and moves on X opposite to the head's roll. The **Dopamine Chime** is `NSSound(named: "Glass")` on recovery.
-* `Info.plist` (with `NSMotionUsageDescription` and `LSUIElement`) is embedded in the executable via `-sectcreate __TEXT __info_plist`, so CoreMotion can request access when the app runs straight from `swift run`.
+* `Info.plist` (with `NSMotionUsageDescription`, `NSCameraUsageDescription` and `LSUIElement`) is embedded in the executable via `-sectcreate __TEXT __info_plist`, so CoreMotion can request access when the app runs straight from `swift run`.
 
 ## Tests
 
@@ -169,7 +201,9 @@ Applied adaptations are tagged on `WorkoutSession.appliedDeskAdaptations`, e.g. 
 | `Pipeline B and auto-routing` | 10/10 curl reps counted; squats rejected by B; **squats → A, curls → B**; femur rotation forces A; buffer → router; async == sync |
 | `Flow Score` | weights, cheat penalties, tempo CV, empty set |
 | `DeskPostureEngine` | full **neutral → drifting → magneticNudge → dopamineRecovery → neutral** cycle; drifting recovery; motion gate (accel + gyro); EMA step; **turtle signature** and its negative case; lateral lean; demo fast-forward; summary mapping |
-| `Quaternion + Zero-Touch` | Euler round-trip; relative attitude near gimbal lock; 10 s seated detection + P85 baseline; standing up |
+| `Quaternion + calibration` | Euler round-trip; relative attitude near gimbal lock; 10 s seated detection + P85 baseline; reference kept across brief movements; **guided 3 s hold with AirPods worn crooked**; hold restarts on movement; timeout; guided-only mode reopens at the next sit-down; simulated head; standing up |
+| `Webcam-assisted calibration` | upright posture ready; no face; blocking vs advisory cues; missing shoulders; the gate pauses and resumes the hold |
+| `Posture history` | per-minute categories, states and percentiles; short minutes dropped; dominant app and roll; sitting sessions and breaks; nudge/recovery/relapse events; store round-trip and torn lines; 90-day compaction |
 | `AdaptivePrescriptionEngine` | each rule in isolation, dominant lean, combined tags, session score |
 
 ## Known limits
@@ -177,3 +211,5 @@ Applied adaptations are tagged on `WorkoutSession.appliedDeskAdaptations`, e.g. 
 * The `@Model` branch of `FlowModels.swift` compiles only on a toolchain with the SwiftData macro plugin (any Xcode). On Command Line Tools the plain-class fallback with the same API is used.
 * Gym Pocket Mode lives in `BiomechanicsCore` (engines, models, tests). The iOS/watchOS front-end that feeds it is not part of this repository yet.
 * Detection thresholds come from the v3.0 spec and are validated on synthetic signals only, not yet on recorded AirPods data.
+* The webcam cues and their thresholds are estimates for a laptop camera and have not been validated on live video yet.
+* When FlowMac runs from Terminal (`make run`), macOS attributes the camera and motion permissions to Terminal.
