@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import BiomechanicsCore
+import FlowUI
 import Observation
 import SwiftUI
 

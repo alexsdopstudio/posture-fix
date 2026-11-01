@@ -27,10 +27,14 @@ posture-fix/
 │   │   ├── Models/FlowModels.swift    SwiftData + CloudKit models
 │   │   ├── Sensors/                   Ring buffer, auto-start, calibration, AirPods service
 │   │   ├── Engines/                   Desk engine, Pipeline A/B, router, Flow Score, prescriptions, webcam cues
-│   │   └── History/                   Per-minute posture records, events, JSON Lines store
+│   │   ├── History/                   Per-minute posture records, events, JSON Lines store, insights
+│   │   └── Simulation/                Synthetic workouts for tests and the gym demo
+│   ├── Sources/FlowUI/                SwiftUI shared by the Mac and iPhone apps
 │   └── Tests/BiomechanicsCoreTests/   68 deterministic tests (66 on Command Line Tools)
 ├── Apps/FlowMac/                      macOS 14+ menu bar app (executable package)
 │   └── Sources/FlowMac/
+├── Apps/FlowPhone/                    iOS 17+ app (XcodeGen project.yml, simulator for now)
+│   └── Sources/{Posture,Today,Gym}/
 ├── docs/posture-history-design.md     Posture history design and decisions
 ├── Makefile                           test / build / run shortcuts
 ├── CLAUDE.md                          Guide for coding agents
@@ -43,6 +47,7 @@ posture-fix/
 make test     # swift test --package-path Packages/BiomechanicsCore (+ CLT flags if needed)
 make build    # swift build --package-path Apps/FlowMac
 make run      # launches the menu bar app
+make phone-run  # builds the iPhone app with XcodeGen + xcodebuild and runs it in the Simulator
 ```
 
 With Xcode installed you can also open either `Package.swift` in Xcode, or run
@@ -192,6 +197,16 @@ Applied adaptations are tagged on `WorkoutSession.appliedDeskAdaptations`, e.g. 
 * **`SpatialMagneticAudioEngine.swift`**: `AVAudioEngine` + `AVAudioSourceNode` generating a pure 432 Hz sine in real time (20 ms amplitude glide, no clicks), routed in mono into an `AVAudioEnvironmentNode` with `.HRTFHQ`. The source sits 1.5 m behind the nape (`z = 1.5`) and moves on X opposite to the head's roll. The **Dopamine Chime** is `NSSound(named: "Glass")` on recovery.
 * `Info.plist` (with `NSMotionUsageDescription`, `NSCameraUsageDescription` and `LSUIElement`) is embedded in the executable via `-sectcreate __TEXT __info_plist`, so CoreMotion can request access when the app runs straight from `swift run`.
 
+## FlowPhone (iPhone)
+
+Built from `Apps/FlowPhone/project.yml` with XcodeGen (the generated `.xcodeproj` is not committed). It runs in the Simulator only for now: installing on a device needs an Apple ID in Xcode, and iCloud sync needs the paid Apple Developer Program. Its data stays on the iPhone.
+
+* **Postura**: the same desk engine, guided calibration (3 s steady hold, no webcam, in a sheet) and ring as on the Mac, while using the phone. Nudge: the spatial 432 Hz tone in the AirPods, a success haptic on recovery. Foreground only.
+* **Oggi**: the shared `InsightsView` on the iPhone's own history.
+* **Palestra** (Gym Pocket Mode): the prescription from today's desk load before the workout; then AirPods on the head and the iPhone in the pocket (its pitch is `pocketThighPitch`). The 5 s retroactive buffer keeps rep 1, the second rep fires Auto-Start, 3 s of stillness ends the set, `ParallelPipelineRouter` analyses it and the `ExerciseSet` is saved with SwiftData (local, `cloudKitDatabase: .none`). Manual start/stop for lifts Auto-Start cannot see, and "Simula serie" (squat or curl from `SyntheticWorkout`) for the Simulator, which has no motion sensors.
+* Shared with the Mac through the `FlowUI` library: `HeadRingView`, `InsightsView`, `PostureHistoryRecorder`, `SpatialMagneticAudioEngine`.
+* Launch arguments for screenshots: `-initialTab today|gym`, `-gymDemo YES`.
+
 ## Tests
 
 `Packages/BiomechanicsCore/Tests/BiomechanicsCoreTests` uses swift-testing. Every signal is synthetic and seeded (SplitMix64 + Box-Muller), so runs are fully deterministic.
@@ -213,7 +228,7 @@ Applied adaptations are tagged on `WorkoutSession.appliedDeskAdaptations`, e.g. 
 ## Known limits
 
 * The `@Model` branch of `FlowModels.swift` compiles only on a toolchain with the SwiftData macro plugin (any Xcode). On Command Line Tools the plain-class fallback with the same API is used.
-* Gym Pocket Mode lives in `BiomechanicsCore` (engines, models, tests). The iOS/watchOS front-end that feeds it is not part of this repository yet.
+* The iPhone app has only run in the Simulator (no device signing yet); live Gym Pocket Mode with real AirPods and a pocket iPhone is untested. Data is not synced between Mac and iPhone until iCloud is set up.
 * Detection thresholds come from the v3.0 spec and are validated on synthetic signals only, not yet on recorded AirPods data.
 * The webcam cues and their thresholds are estimates for a laptop camera and have not been validated on live video yet.
 * When FlowMac runs from Terminal (`make run`), macOS attributes the camera and motion permissions to Terminal.

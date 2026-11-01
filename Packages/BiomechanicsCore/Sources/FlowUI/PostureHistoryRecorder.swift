@@ -1,25 +1,40 @@
-import AppKit
 import BiomechanicsCore
 import Foundation
 import Observation
 
 /// Records the posture history (phase 1 of docs/posture-history-design.md): one aggregate
 /// per minute of real AirPods data plus nudge, recovery, relapse and calibration events.
-/// Everything stays in ~/Library/Application Support/Flow/History.
+/// Everything stays in the app's Application Support/Flow/History, on this device only.
+/// Shared by the Mac and iPhone apps; the host forwards platform events (frontmost app,
+/// termination) to it.
 @MainActor
 @Observable
-final class PostureHistoryRecorder {
+public final class PostureHistoryRecorder {
     /// Real AirPods time recorded today, seconds.
-    private(set) var todayRecordedSeconds: Double = 0
+    public private(set) var todayRecordedSeconds: Double = 0
     /// Plain-language insights from today and the previous 7 days, refreshed every minute.
-    private(set) var insights = PostureInsights.empty
+    public private(set) var insights = PostureInsights.empty
 
     /// Opt-in: also store the bundle id of the app in the foreground. Off by default.
-    var recordsFrontmostApp: Bool {
+    public var recordsFrontmostApp: Bool {
         didSet { UserDefaults.standard.set(recordsFrontmostApp, forKey: Self.frontmostPreferenceKey) }
     }
 
-    var historyDirectory: URL { store.directory }
+    /// Set by the host app (macOS only) when the foreground app changes.
+    @ObservationIgnored public var frontmostApp: String?
+
+    public var historyDirectory: URL { store.directory }
+
+    /// Today's desk load, the input of the gym prescription.
+    public var todayDeskLoad: DeskLoadSnapshot {
+        let categories = todayMinutes.reduce(PostureCategorySeconds()) { $0 + $1.categories }
+        return DeskLoadSnapshot(
+            techNeckAndTurtleMinutes: (categories.techNeck + categories.turtle) / 60,
+            leftLeanMinutes: categories.leftLean / 60,
+            rightLeanMinutes: categories.rightLean / 60,
+            staticRigidityMinutes: (todayMinutes.map(\.sittingSessionSeconds).max() ?? 0) / 60
+        )
+    }
 
     private static let frontmostPreferenceKey = "recordsFrontmostApp"
 
@@ -31,34 +46,16 @@ final class PostureHistoryRecorder {
     @ObservationIgnored private var todayEvents: [PostureEventRecord] = []
     @ObservationIgnored private var previousDays: [PostureMinuteRecord] = []
     @ObservationIgnored private var calibrationID: UUID?
-    @ObservationIgnored private var frontmostApp: String?
     @ObservationIgnored private var currentDay = Calendar.current.startOfDay(for: Date())
-    @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
-    init() {
+    public init() {
         recordsFrontmostApp = UserDefaults.standard.bool(forKey: Self.frontmostPreferenceKey)
-        frontmostApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            MainActor.assumeIsolated { self?.frontmostApp = app?.bundleIdentifier }
-        })
-        observers.append(NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.flush() }
-        })
         perform("retention") { try store.applyRetention(now: Date()) }
         loadToday()
     }
 
     /// One judged sample of real AirPods data.
-    func record(_ engine: DeskPostureEngine, pose: HeadPose, isInAxis: Bool) {
+    public func record(_ engine: DeskPostureEngine, pose: HeadPose, isInAxis: Bool) {
         rollOverDayIfNeeded()
         let snapshot = PostureSampleSnapshot(
             date: Date(),
@@ -77,7 +74,7 @@ final class PostureHistoryRecorder {
         }
     }
 
-    func record(_ events: [DeskPostureEvent]) {
+    public func record(_ events: [DeskPostureEvent]) {
         guard !events.isEmpty else { return }
         let records = tracker.handle(events, at: Date(), calibrationID: calibrationID)
         guard !records.isEmpty else { return }
@@ -87,7 +84,7 @@ final class PostureHistoryRecorder {
     }
 
     /// A new reference attitude: later minutes belong to this calibration.
-    func recordCalibration(usedCamera: Bool, unmetCues: [PostureCue]) {
+    public func recordCalibration(usedCamera: Bool, unmetCues: [PostureCue]) {
         let id = UUID()
         calibrationID = id
         let event = PostureEventRecord(
@@ -101,15 +98,10 @@ final class PostureHistoryRecorder {
     }
 
     /// Closes the minute in progress (AirPods removed, app quitting).
-    func flush() {
+    public func flush() {
         if let minute = aggregator.flush() {
             save(minute)
         }
-    }
-
-    func revealInFinder() {
-        try? FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
-        NSWorkspace.shared.open(store.directory)
     }
 
     private func save(_ minute: PostureMinuteRecord) {
@@ -149,7 +141,7 @@ final class PostureHistoryRecorder {
         do {
             try body()
         } catch {
-            NSLog("FlowMac: posture history (\(what)) failed: \(error.localizedDescription)")
+            NSLog("Flow: posture history (\(what)) failed: \(error.localizedDescription)")
         }
     }
 }

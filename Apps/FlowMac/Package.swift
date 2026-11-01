@@ -21,6 +21,7 @@ let package = Package(
             name: "FlowMac",
             dependencies: [
                 .product(name: "BiomechanicsCore", package: "BiomechanicsCore"),
+                .product(name: "FlowUI", package: "BiomechanicsCore"),
             ],
             exclude: ["Info.plist"],
             linkerSettings: [

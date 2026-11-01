@@ -40,11 +40,17 @@ let package = Package(
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
         .library(name: "BiomechanicsCore", targets: ["BiomechanicsCore"]),
+        // SwiftUI pieces shared by the Mac and iPhone apps (ring, insights, history, audio).
+        .library(name: "FlowUI", targets: ["FlowUI"]),
     ],
     targets: [
         .target(
             name: "BiomechanicsCore",
             swiftSettings: coreSwiftSettings
+        ),
+        .target(
+            name: "FlowUI",
+            dependencies: ["BiomechanicsCore"]
         ),
         .testTarget(
             name: "BiomechanicsCoreTests",

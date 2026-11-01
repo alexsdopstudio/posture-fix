@@ -1,5 +1,9 @@
-import AppKit
 import AVFoundation
+#if canImport(AppKit)
+import AppKit
+#else
+import UIKit
+#endif
 
 /// Render-thread state of the 432 Hz generator. Plain Double stores are atomic on
 /// Apple silicon and Intel; the main thread only writes the targets.
@@ -14,7 +18,7 @@ private final class ToneState: @unchecked Sendable {
 /// spatialised with HRTF 1.5 m behind the head and shifted on X opposite to the
 /// head's roll, so the sound draws the head back into axis.
 @MainActor
-final class SpatialMagneticAudioEngine {
+public final class SpatialMagneticAudioEngine {
     static let distanceBehindHead: Float = 1.5
     static let pullAmplitude = 0.18
 
@@ -25,9 +29,9 @@ final class SpatialMagneticAudioEngine {
     private var configurationObserver: NSObjectProtocol?
     private var stopWorkItem: DispatchWorkItem?
 
-    private(set) var isPulling = false
+    public private(set) var isPulling = false
 
-    init() {
+    public init() {
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: engine,
@@ -41,16 +45,21 @@ final class SpatialMagneticAudioEngine {
         }
     }
 
-    func startMagneticPull(roll: Double) {
+    public func startMagneticPull(roll: Double) {
         stopWorkItem?.cancel()
         stopWorkItem = nil
         do {
+            #if os(iOS)
+            // Play over whatever else is playing, through the AirPods.
+            try AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
             try configureIfNeeded()
             if !engine.isRunning {
                 try engine.start()
             }
         } catch {
-            NSLog("FlowMac: spatial audio unavailable: \(error.localizedDescription)")
+            NSLog("Flow: spatial audio unavailable: \(error.localizedDescription)")
             return
         }
         isPulling = true
@@ -59,13 +68,13 @@ final class SpatialMagneticAudioEngine {
     }
 
     /// Head rolls right (positive) → the source moves left, and vice versa.
-    func updatePull(roll: Double) {
+    public func updatePull(roll: Double) {
         guard let source else { return }
         let x = Float(max(-1.5, min(1.5, -roll / 10)))
         source.position = AVAudio3DPoint(x: x, y: 0, z: Self.distanceBehindHead)
     }
 
-    func stopMagneticPull() {
+    public func stopMagneticPull() {
         guard isPulling else { return }
         isPulling = false
         tone.targetAmplitude = 0
@@ -80,8 +89,12 @@ final class SpatialMagneticAudioEngine {
     }
 
     /// Reward on the return to a neutral posture.
-    func playDopamineChime() {
+    public func playDopamineChime() {
+        #if canImport(AppKit)
         NSSound(named: NSSound.Name("Glass"))?.play()
+        #else
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        #endif
     }
 
     private func configureIfNeeded() throws {

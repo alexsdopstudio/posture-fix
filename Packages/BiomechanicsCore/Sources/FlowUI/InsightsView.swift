@@ -3,10 +3,14 @@ import SwiftUI
 
 /// Today's posture in plain words: an hourly timeline, a few insights backed by enough
 /// data, and one suggestion. Everything comes from `PostureInsightsEngine`.
-struct InsightsView: View {
+public struct InsightsView: View {
     let insights: PostureInsights
 
-    var body: some View {
+    public init(insights: PostureInsights) {
+        self.insights = insights
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Oggi")
@@ -106,7 +110,7 @@ struct InsightsView: View {
             : "Testa di solito \(degrees)° più in alto del neutro"
     }
 
-    static func text(for tip: PostureTip) -> String {
+    public static func text(for tip: PostureTip) -> String {
         switch tip {
         case let .takeBreaks(minutes):
             return "Alzati ogni \(minutes) minuti, anche solo per un minuto: è il momento in cui inizi a cedere."
@@ -121,7 +125,7 @@ struct InsightsView: View {
         }
     }
 
-    static func duration(minutes: Double) -> String {
+    public static func duration(minutes: Double) -> String {
         let total = Int(minutes)
         return total < 60 ? "\(total) min" : "\(total / 60) h \(total % 60) min"
     }

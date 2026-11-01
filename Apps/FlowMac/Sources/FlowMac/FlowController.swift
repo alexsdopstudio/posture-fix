@@ -1,5 +1,6 @@
 import AppKit
 import BiomechanicsCore
+import FlowUI
 import Foundation
 import Observation
 
@@ -64,6 +65,7 @@ final class FlowController {
 
     init() {
         usesCameraForCalibration = UserDefaults.standard.object(forKey: Self.cameraPreferenceKey) as? Bool ?? true
+        observeMacEventsForHistory()
         motion.onSample = { [weak self] sample, pose in
             self?.handle(sample: sample, pose: pose)
         }
@@ -202,6 +204,28 @@ final class FlowController {
             calibrationHUD.hide()
         }
         wasCalibrating = calibrating
+    }
+
+    // MARK: - History hooks
+
+    /// The shared recorder is platform-free: feed it the frontmost app and flush on quit.
+    private func observeMacEventsForHistory() {
+        history.frontmostApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            MainActor.assumeIsolated { self?.history.frontmostApp = app?.bundleIdentifier }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.history.flush() }
+        }
     }
 
     // MARK: - Webcam-assisted calibration

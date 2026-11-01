@@ -1,5 +1,6 @@
 import AppKit
 import BiomechanicsCore
+import FlowUI
 import SwiftUI
 
 @main
@@ -126,7 +127,9 @@ struct FlowMenuView: View {
             ))
 
             Button {
-                controller.history.revealInFinder()
+                let directory = controller.history.historyDirectory
+                try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                NSWorkspace.shared.open(directory)
             } label: {
                 Label("Apri i dati grezzi", systemImage: "folder")
             }
