@@ -8,7 +8,7 @@ struct HeadPostureView: View {
     var body: some View {
         VStack(spacing: 10) {
             HeadRingView(state: controller.headRing, thresholds: controller.ringThresholds)
-                .frame(width: 236, height: 236)
+                .frame(width: 200, height: 200)
                 // Movement pauses the posture timers: a small icon on the ring, never a layout change.
                 .overlay(alignment: .topTrailing) {
                     Image(systemName: "pause.circle")
@@ -20,7 +20,7 @@ struct HeadPostureView: View {
                 }
                 .frame(maxWidth: .infinity)
 
-            HStack(spacing: 14) {
+            HStack(spacing: 10) {
                 readout("Avanti/indietro", controller.headPitchDeviation)
                 readout("Laterale", controller.headRoll)
                 readout("Rotazione", controller.headYaw)

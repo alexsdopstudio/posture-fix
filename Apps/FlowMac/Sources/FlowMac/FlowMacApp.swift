@@ -30,77 +30,32 @@ final class FlowAppDelegate: NSObject, NSApplicationDelegate {
 
 struct FlowMenuView: View {
     let controller: FlowController
-    /// The settings and demo controls are tucked away by default.
-    @AppStorage("showsControls") private var showsControls = false
     @State private var contentHeight: CGFloat = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Flow Score")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("\(controller.flowScore)%")
-                        .font(.system(size: 46, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
-                    Text(controller.stateDescription)
-                        .font(.callout)
-                        .foregroundStyle(stateColor)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 6) {
-                    statusBadge(
-                        icon: controller.motion.isUsingSimulation ? "waveform.path.ecg" : "airpodspro",
-                        text: controller.motion.isUsingSimulation ? "Simulazione" : "AirPods live",
-                        color: controller.motion.isUsingSimulation ? .secondary : .green
-                    )
-                    statusBadge(icon: "flame.fill", text: "Streak \(controller.streak)", color: .orange)
-                }
-            }
-
-            if controller.isCalibrated {
-                HeadPostureView(controller: controller)
-            } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "scope")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.secondary)
-                    Text("Calibra per iniziare: siediti dritto e tieni la testa ferma 3 secondi.")
-                        .font(.callout)
-                        .multilineTextAlignment(.center)
-                    Button("Calibra") { controller.recalibrate() }
-                        .buttonStyle(.borderedProminent)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            header
 
             Divider()
 
-            InsightsView(insights: controller.history.insights)
+            HStack(alignment: .top, spacing: 16) {
+                Group {
+                    if controller.isCalibrated {
+                        HeadPostureView(controller: controller)
+                    } else {
+                        calibratePrompt
+                    }
+                }
+                .frame(width: 210)
 
-            Divider()
+                Divider()
 
-            DisclosureGroup(isExpanded: $showsControls) {
-                controls
-                    .padding(.top, 8)
-            } label: {
-                Text("Controlli")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack {
-                Spacer()
-                Button("Esci") { NSApplication.shared.terminate(nil) }
-                    .buttonStyle(.borderless)
-                    .font(.callout)
+                InsightsView(insights: controller.history.insights)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
         .padding(16)
-        .frame(width: 300)
+        .frame(width: 580)
         .fixedSize(horizontal: false, vertical: true)
         .background(GeometryReader { geometry in
             Color.clear.preference(key: PanelHeightKey.self, value: geometry.size.height)
@@ -109,13 +64,56 @@ struct FlowMenuView: View {
         .background(PanelWindowSizer(contentHeight: contentHeight))
     }
 
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(controller.calibrationStatus, systemImage: "scope")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private var header: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Flow Score")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("\(controller.flowScore)%")
+                        .font(.system(size: 40, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                    Text(controller.stateDescription)
+                        .font(.callout)
+                        .foregroundStyle(stateColor)
+                }
+            }
+            Spacer()
+            statusBadge(
+                icon: controller.motion.isUsingSimulation ? "waveform.path.ecg" : "airpodspro",
+                text: controller.motion.isUsingSimulation ? "Simulazione" : "AirPods live",
+                color: controller.motion.isUsingSimulation ? .secondary : .green
+            )
+            statusBadge(icon: "flame.fill", text: "Streak \(controller.streak)", color: .orange)
+            controlsMenu
+        }
+    }
 
+    private var calibratePrompt: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "scope")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+            Text("Calibra per iniziare: siediti dritto e tieni la testa ferma 3 secondi.")
+                .font(.callout)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Calibra") { controller.recalibrate() }
+                .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+    }
+
+    /// Settings, demo and quit live in one menu so they never take panel space.
+    private var controlsMenu: some View {
+        Menu {
+            Text(controller.calibrationStatus)
             Button(controller.isCalibrated ? "Ricalibra" : "Calibra") { controller.recalibrate() }
+
+            Divider()
 
             Toggle("Webcam nella calibrazione", isOn: Binding(
                 get: { controller.usesCameraForCalibration },
@@ -125,30 +123,31 @@ struct FlowMenuView: View {
                 get: { controller.history.recordsFrontmostApp },
                 set: { controller.history.recordsFrontmostApp = $0 }
             ))
-
-            Button {
+            Button("Apri i dati grezzi") {
                 let directory = controller.history.historyDirectory
                 try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 NSWorkspace.shared.open(directory)
-            } label: {
-                Label("Apri i dati grezzi", systemImage: "folder")
             }
+
+            Divider()
 
             if controller.isSimulatingTechNeck {
                 Button("✨ Raddrizza Postura") { controller.straightenUp() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.green)
-                Text("Simulazione attiva: −22° avanti, +7° laterale")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
             } else {
                 Button("🧪 Simula Tech Neck (>\(controller.nudgeAfterSeconds)s)") { controller.simulateTechNeck() }
             }
+
+            Divider()
+
+            Button("Esci") { NSApplication.shared.terminate(nil) }
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.body)
+                .foregroundStyle(.secondary)
         }
-        .toggleStyle(.switch)
-        .controlSize(.small)
-        .font(.callout)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
     }
 
     private func statusBadge(icon: String, text: String, color: Color) -> some View {
